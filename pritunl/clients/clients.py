@@ -170,6 +170,8 @@ class Clients(object):
 
             if self.server.search_domain:
                 for domain in self.server.search_domain.split(','):
+                    client_conf += 'push "dhcp-option DOMAIN-SEARCH %s"\n' % (
+                        domain.strip())
                     client_conf += 'push "dhcp-option DOMAIN %s"\n' % (
                         domain.strip())
 
