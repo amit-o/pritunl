@@ -183,7 +183,7 @@ class ServerInstance(object):
 
             metric = route.get('metric')
             if metric:
-                metric_def = ' default %s' % metric
+                metric_def = ' vpn_gateway %s' % metric
                 metric = ' %s' % metric
             else:
                 metric_def = ''
@@ -405,7 +405,7 @@ class ServerInstance(object):
         server_conf += '<dh>\n%s\n</dh>\n' % self.server.dh_params
 
         with open(self.ovpn_conf_path, 'w') as ovpn_conf:
-            os.chmod(self.ovpn_conf_path, 0600)
+            os.chmod(self.ovpn_conf_path, 0o600)
             ovpn_conf.write(server_conf)
 
     def enable_ip_forwarding(self):
@@ -436,7 +436,8 @@ class ServerInstance(object):
                 utils.check_output_logged(
                     ['sysctl', '-w', 'net.ipv6.conf.all.forwarding=1'])
             except subprocess.CalledProcessError:
-                logger.exception('Failed to enable IPv6 forwarding', 'server',
+                logger.exception(
+                    'Failed to enable IPv6 forwarding', 'server',
                     server_id=self.server.id,
                 )
 
@@ -502,8 +503,8 @@ class ServerInstance(object):
                     default_interface = line_split[7]
 
                 routes.append((
-                    ipaddress.IPNetwork('%s/%s' % (line_split[0],
-                        utils.subnet_to_cidr(line_split[2]))),
+                    ipaddress.ip_network('%s/%s' % (line_split[0],
+                        utils.subnet_to_cidr(line_split[2])), strict=False),
                     line_split[7]
                 ))
         routes.reverse()
@@ -572,7 +573,7 @@ class ServerInstance(object):
 
             network = route['network']
             is6 = ':' in network
-            network_obj = ipaddress.IPNetwork(network)
+            network_obj = ipaddress.ip_network(network, strict=False)
 
             interface = route['nat_interface']
             if is6:
@@ -676,8 +677,8 @@ class ServerInstance(object):
                     default_interface = line_split[7]
 
                 routes.append((
-                    ipaddress.IPNetwork('%s/%s' % (line_split[0],
-                        utils.subnet_to_cidr(line_split[2]))),
+                    ipaddress.ip_network('%s/%s' % (line_split[0],
+                        utils.subnet_to_cidr(line_split[2])), strict=False),
                     line_split[7]
                 ))
         routes.reverse()
@@ -743,7 +744,7 @@ class ServerInstance(object):
 
             network = route['network']
             is6 = ':' in network
-            network_obj = ipaddress.IPNetwork(network)
+            network_obj = ipaddress.ip_network(network, strict=False)
 
             interface = route['nat_interface']
             if is6:
@@ -818,8 +819,6 @@ class ServerInstance(object):
                 '-t', 'nat',
                 '-o', self.interface,
                 '-j', 'MASQUERADE',
-                '-m', 'comment',
-                '--comment', 'pritunl-%s' % self.server.id,
             ]
             self.iptables.add_rule(rule)
             self.iptables.add_rule6(rule)
@@ -830,8 +829,6 @@ class ServerInstance(object):
                     '-t', 'nat',
                     '-o', self.interface_wg,
                     '-j', 'MASQUERADE',
-                    '-m', 'comment',
-                    '--comment', 'pritunl-%s' % self.server.id,
                 ]
                 self.iptables_wg.add_rule(rule)
                 self.iptables_wg.add_rule6(rule)
@@ -894,7 +891,7 @@ class ServerInstance(object):
             yield
 
             try:
-                self.server.output.push_output(line)
+                self.server.output.push_output(line.decode())
             except:
                 logger.exception('Failed to push vpn output', 'server',
                     server_id=self.server.id,
@@ -915,7 +912,7 @@ class ServerInstance(object):
             yield
 
             try:
-                self.server.output.push_output(line)
+                self.server.output.push_output(line.decode())
             except:
                 logger.exception('Failed to push vpn output', 'server',
                     server_id=self.server.id,
@@ -956,7 +953,7 @@ class ServerInstance(object):
                             instance_link.stop()
 
                         self.clean_exit = True
-                        for _ in xrange(10):
+                        for _ in range(10):
                             self.process.send_signal(signal.SIGKILL)
                             time.sleep(0.01)
                 except OSError:
@@ -1038,6 +1035,16 @@ class ServerInstance(object):
             error_count = 0
 
             while not self.interrupt:
+                if settings.local.vpn_state == DISABLED:
+                    logger.warning(
+                        'VPN server disabled',
+                        'server',
+                        message=settings.local.notification,
+                    )
+                    if self.stop_process():
+                        return
+                    continue
+
                 try:
                     doc = self.collection.find_and_modify({
                         '_id': self.server.id,
@@ -1283,7 +1290,7 @@ class ServerInstance(object):
             raise
 
         with open(self.wg_private_key_path, 'w') as privatekey_file:
-            os.chmod(self.ovpn_conf_path, 0600)
+            os.chmod(self.ovpn_conf_path, 0o600)
             privatekey_file.write(private_key)
 
         self.wg_private_key = private_key.strip()
@@ -1412,7 +1419,7 @@ class ServerInstance(object):
             raise
 
     def disconnect_wg(self, wg_public_key):
-        for i in xrange(10):
+        for i in range(10):
             try:
                 utils.check_output_logged([
                     'wg', 'set', self.interface_wg,

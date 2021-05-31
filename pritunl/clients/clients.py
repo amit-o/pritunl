@@ -63,7 +63,7 @@ class Clients(object):
         skip = True
         self.ip_pool = []
         self.ip_network = ipaddress.IPv4Network(self.server.network)
-        for ip_addr in self.ip_network.iterhosts():
+        for ip_addr in self.ip_network.hosts():
             if skip:
                 skip = False
                 continue
@@ -123,7 +123,7 @@ class Clients(object):
                 network = route['network']
                 metric = route.get('metric')
                 if metric:
-                    metric_def = ' default %s' % metric
+                    metric_def = ' vpn_gateway %s' % metric
                 else:
                     metric_def = ''
 
@@ -213,7 +213,7 @@ class Clients(object):
                     network = route['network']
                     metric = route.get('metric')
                     if metric:
-                        metric_def = ' default %s' % metric
+                        metric_def = ' vpn_gateway %s' % metric
                         metric = ' %s' % metric
                     else:
                         metric_def = ''
@@ -268,6 +268,8 @@ class Clients(object):
             'gateway': network_gateway,
             'gateway6': network_gateway6,
             'port': self.server.port_wg,
+            'web_port': settings.app.server_port,
+            'web_no_ssl': not settings.app.server_ssl,
             'public_key': self.instance.wg_public_key,
             'routes': [],
             'routes6': [],
@@ -289,7 +291,7 @@ class Clients(object):
             #     network = route['network']
             #     metric = route.get('metric')
             #     if metric:
-            #         metric_def = ' default %s' % metric
+            #         metric_def = ' vpn_gateway %s' % metric
             #     else:
             #         metric_def = ''
             #
@@ -698,7 +700,7 @@ class Clients(object):
                         for ip_addr in ip_pool:
                             try:
                                 self.pool_collection.insert({
-                                    '_id': long(ip_addr._ip),
+                                    '_id': int(ip_addr._ip),
                                     'server_id': self.server.id,
                                     'user_id': user_id,
                                     'mac_addr': mac_addr,
@@ -1160,7 +1162,7 @@ class Clients(object):
 
         nacl_box = nacl.public.Box(priv_key, sender_pub_key)
 
-        plaintext = nacl_box.decrypt(cipher_data, nonce).decode('utf-8')
+        plaintext = nacl_box.decrypt(cipher_data, nonce).decode()
 
         auth_token = plaintext[:16]
         auth_password = plaintext[26:]
@@ -1530,6 +1532,13 @@ class Clients(object):
             '-j', 'ACCEPT',
         ]
 
+        forward_base_args6 = [
+            'FORWARD',
+            '-d', client_addr6,
+            '-o', self.instance.interface,
+            '-j', 'ACCEPT',
+        ]
+
         prerouting_base_args = [
             'PREROUTING',
             '-t', 'nat',
@@ -1544,10 +1553,7 @@ class Clients(object):
             '-j', 'DNAT',
         ]
 
-        extra_args = [
-            '-m', 'comment',
-            '--comment', 'pritunl-%s' % self.server.id,
-        ]
+        extra_args = []
 
         forward2_base_rule = [
             'FORWARD',
@@ -1559,7 +1565,15 @@ class Clients(object):
         ] + extra_args
         rules.append(forward2_base_rule)
         if self.server.ipv6:
-            rules6.append(forward2_base_rule)
+            forward2_base_rule6 = [
+                'FORWARD',
+                '-s', client_addr6,
+                '-i', self.instance.interface,
+                '-m', 'conntrack',
+                '--ctstate','RELATED,ESTABLISHED',
+                '-j', 'ACCEPT',
+            ] + extra_args
+            rules6.append(forward2_base_rule6)
 
         for data in usr.port_forwarding:
             proto = data.get('protocol')
@@ -1628,6 +1642,11 @@ class Clients(object):
                 ] + extra_args
                 rules.append(rule)
                 if self.server.ipv6:
+                    rule = forward_base_args6 + [
+                        '-p', proto,
+                        '-m', proto,
+                        '--dport', port or dport,
+                    ] + extra_args
                     rules6.append(rule)
 
         return rules, rules6
@@ -1649,6 +1668,13 @@ class Clients(object):
             '-j', 'ACCEPT',
         ]
 
+        forward_base_args6 = [
+            'FORWARD',
+            '-d', client_addr6,
+            '-o', self.instance.interface_wg,
+            '-j', 'ACCEPT',
+        ]
+
         prerouting_base_args = [
             'PREROUTING',
             '-t', 'nat',
@@ -1663,10 +1689,7 @@ class Clients(object):
             '-j', 'DNAT',
         ]
 
-        extra_args = [
-            '-m', 'comment',
-            '--comment', 'pritunl-%s' % self.server.id,
-        ]
+        extra_args = []
 
         forward2_base_rule = [
             'FORWARD',
@@ -1678,7 +1701,15 @@ class Clients(object):
         ] + extra_args
         rules.append(forward2_base_rule)
         if self.server.ipv6:
-            rules6.append(forward2_base_rule)
+            forward2_base_rule6 = [
+                'FORWARD',
+                '-s', client_addr6,
+                '-i', self.instance.interface_wg,
+                '-m', 'conntrack',
+                '--ctstate','RELATED,ESTABLISHED',
+                '-j', 'ACCEPT',
+            ] + extra_args
+            rules6.append(forward2_base_rule6)
 
         for data in usr.port_forwarding:
             proto = data.get('protocol')
@@ -1747,6 +1778,11 @@ class Clients(object):
                 ] + extra_args
                 rules.append(rule)
                 if self.server.ipv6:
+                    rule = forward_base_args6 + [
+                        '-p', proto,
+                        '-m', proto,
+                        '--dport', port or dport,
+                    ] + extra_args
                     rules6.append(rule)
 
         return rules, rules6
@@ -1762,9 +1798,9 @@ class Clients(object):
     def clear_iptables_rules(self, rules, rules6):
         if rules or rules6:
             for rule in rules:
-                self.instance.iptables.remove_rule(rule)
+                self.instance.iptables.remove_rule(rule, silent=True)
             for rule6 in rules6:
-                self.instance.iptables.remove_rule6(rule6)
+                self.instance.iptables.remove_rule6(rule6, silent=True)
 
     def _connected(self, client_id):
         client = self.clients.find_id(client_id)
@@ -1833,7 +1869,7 @@ class Clients(object):
             domain = (str(client['user_name']).split('@')[0] +
                 '.' + str(client['org_name'])).lower()
             domain_hash = hashlib.md5()
-            domain_hash.update(domain)
+            domain_hash.update(domain.encode())
             domain_hash = bson.binary.Binary(domain_hash.digest(),
                 subtype=bson.binary.MD5_SUBTYPE)
             doc['domain'] = domain_hash
@@ -2426,14 +2462,14 @@ class Clients(object):
             self.clear_routes()
 
 def on_port_forwarding(msg):
-    for listener in _port_listeners.values():
+    for listener in list(_port_listeners.values()):
         listener(
             msg['message']['org_id'],
             msg['message']['user_id'],
         )
 
 def on_client(msg):
-    for listener in _client_listeners.values():
+    for listener in list(_client_listeners.values()):
         listener(
             msg['message']['state'],
             msg['message'].get('server_id'),

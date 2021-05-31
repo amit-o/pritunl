@@ -7,11 +7,13 @@ import os
 def set_acme(token, authorization):
     coll = mongo.get_collection('acme_challenges')
 
-    coll.insert({
+    coll.update({
+        '_id': token,
+    }, {
         '_id': token,
         'authorization': authorization,
         'timestamp': utils.now(),
-    })
+    }, upsert=True)
 
 def get_authorization(token):
     coll = mongo.get_collection('acme_challenges')
@@ -31,7 +33,7 @@ def get_acme_cert(account_key, csr):
     csr_path = temp_path + '.csr'
 
     with open(account_key_path, 'w') as account_key_file:
-        os.chmod(account_key_path, 0600)
+        os.chmod(account_key_path, 0o600)
         account_key_file.write(account_key)
 
     with open(csr_path, 'w') as csr_file:
